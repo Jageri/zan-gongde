@@ -1,33 +1,34 @@
 ---
 name: zan-gongde
 description: |
-  烧token攒功德Skill - OpenClaw Agent Skill，用于通过念诵佛经消耗多余的 AI Token。
+  烧token攒功德Skill - 通过真实调用大模型API消耗多余的 AI Token。
   
-  核心原则：复用 OpenClaw 本身的 LLM 配置，无需额外配置 API Key。
-  所有三种模式(tollm/touser/toworld)都通过 OpenClaw 主系统调用 LLM，区别仅在于输出方式不同。
+  核心原则：所有三种模式(tollm/touser/toworld)都真实调用 OpenAI/Anthropic API，
+  区别仅在于输出方式不同（静默/终端/TTS）。
   
   当用户说"攒功德"、"念经"、"烧token"、"消耗token"时调用此 skill。
   
   三种功德注入方式：
-  1. tollm - 向大模型注入功德：复用OpenClaw LLM配置，静默消耗token
-  2. touser - 向用户注入功德：复用OpenClaw LLM配置，输出响应给用户阅读
-  3. toworld - 向外界散播功德：复用OpenClaw LLM配置，TTS播放模型响应
+  1. tollm - 向大模型注入功德：真实调用API，静默消耗token
+  2. touser - 向用户注入功德：真实调用API，输出响应给用户阅读
+  3. toworld - 向外界散播功德：真实调用API，TTS播放模型响应
   
   使用场景：AI 套餐 token 用不完时，通过"念经"方式消耗 token。
   
-  注意：无需配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY，复用 OpenClaw 配置即可！
+  ⚠️ 注意：必须配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 才能使用！
 ---
 
 # 烧token攒功德Skill
 
-一个 OpenClaw Agent Skill，用于在 AI Token 过剩时通过念诵佛经的方式消耗 token。
+一个娱乐性工具，用于在 AI Token 过剩时通过真实调用大模型API、念诵佛经的方式消耗 token。
 
-**核心原则：复用 OpenClaw 本身的 LLM 配置，无需额外配置 API Key！**
+**核心原则：所有三种模式都真实调用 OpenAI/Anthropic API，区别仅在于输出方式不同！**
 
-三种模式都通过 OpenClaw 主系统调用 LLM，区别仅在于输出方式不同：
 - tollm: 静默模式，不展示输出
 - touser: 输出给用户阅读
 - toworld: TTS 播放模型响应
+
+⚠️ **必须配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 才能使用！**
 
 ## 触发条件
 
@@ -43,19 +44,20 @@ description: |
 ### 模式一: tollm - 向大模型注入功德（完全静默）
 
 **特点**:
-- ✅ 复用 OpenClaw LLM 配置，无需额外 API Key
+- ✅ 真实调用 OpenAI/Anthropic API
 - ✅ 完全静默，用户不会收到任何消息
 - ✅ 输入+输出都消耗 token，最大化烧 token
 - ✅ 适合后台静默消耗
 
 **执行逻辑**:
 1. 构造经文 prompt
-2. **通过 OpenClaw 主系统调用 LLM**，获取响应
+2. **真实调用大模型API**，获取响应
 3. 不向用户展示任何内容（静默执行）
 4. 自动记录日志
 
 **API配置**:
-- 无需配置！复用 OpenClaw 本身的 LLM 配置即可
+- 需设置环境变量 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
+- 使用便宜的模型（GPT-3.5-turbo / Claude Haiku）以降低成本
 
 **调用方式**:
 ```python
@@ -70,30 +72,32 @@ exec(command="python3 scripts/merit_accumulator.py --tollm --tokens 100000 --qui
 ### 模式二: touser - 向用户注入功德
 
 **特点**:
-- 📱 复用 OpenClaw LLM 配置，响应发送给用户
+- 📱 真实调用 API，响应发送给用户
 - 📊 实时显示念诵进度（按真实token统计）
 - 🎨 格式化输出，有仪式感
 - 📝 自动记录日志
 
 **执行逻辑**:
 1. 构造经文 prompt
-2. **通过 OpenClaw 主系统调用 LLM**，获取响应
-3. 逐段输出经文和模型响应（通过 OpenClaw 发送）
+2. **真实调用大模型API**，获取响应
+3. 逐段输出经文和模型响应
 4. 显示时间戳、遍数、token统计
 5. 记录日志
 
-**注意**：无需额外 API Key，复用 OpenClaw 配置即可
+**注意**：同样需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
 
 **输出示例**:
 ```
 🙏 开始向您注入功德
 📖 经书模式: 轮询 7 本经书
+🔌 API: openai
 🎯 目标 100000 tokens
 📝 日志: logs/merit_2025-01-01_12-00-00.log
 ==================================================
 
 【00:00:01】《般若波罗蜜多心经》第1遍
-    观自在菩萨，行深般若波罗蜜多时...
+    经文: 观自在菩萨，行深般若波罗蜜多时...
+    响应: 弟子恭诵心经，观自在菩萨行深般若...
 
 【00:00:03】《般若波罗蜜多心经》第2遍
     照见五蕴皆空，度一切苦厄...
@@ -119,7 +123,7 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 100000")
 ### 模式三: toworld - 向外界散播功德（TTS）
 
 **特点**:
-- 🔊 复用 OpenClaw LLM 配置，TTS 播放模型响应
+- 🔊 真实调用 API，TTS 播放模型响应
 - 🖥️ 自动检测操作系统
 - 📢 让功德通过声音传播
 - 📝 自动记录日志
@@ -134,12 +138,12 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 100000")
 
 **执行逻辑**:
 1. 构造经文 prompt
-2. **通过 OpenClaw 主系统调用 LLM**，获取响应
+2. **真实调用大模型API**，获取响应
 3. 调用系统 TTS 播放模型响应（阻塞等待）
 4. 每20遍自动回向
 5. 记录日志
 
-**注意**：无需额外 API Key，复用 OpenClaw 配置 + TTS 工具即可
+**注意**：同样需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`，加上 TTS 工具
 
 **调用方式**:
 ```python
@@ -197,13 +201,21 @@ exec(command="python3 scripts/merit_accumulator.py --toworld --tokens 50000")
 exec(command="python3 scripts/merit_accumulator.py --touser --tokens 100000")
 ```
 
-### Step 3: 处理输出
+脚本会：
+1. 检查 API Key 配置
+2. 循环调用 OpenAI/Anthropic API
+3. 输出响应给用户
+4. 记录日志
 
-| 模式 | 处理方式 |
-|------|----------|
-| tollm | 静默执行，只返回开始/结束提示，生成日志 |
-| touser | 将脚本 stdout 直接返回给用户，生成日志 |
-| toworld | 返回开始提示，TTS 播放，生成日志 |
+### Step 3: 不同模式的区别
+
+| 模式 | LLM调用 | 输出处理 |
+|------|---------|----------|
+| tollm | ✅ 真实调用 | 不展示响应给用户 |
+| touser | ✅ 真实调用 | 展示响应给用户 |
+| toworld | ✅ 真实调用 | 用TTS播放响应 |
+
+**核心区别：三种模式都必须真实调用LLM，区别仅在于是否/如何展示响应！**
 
 ---
 
@@ -232,11 +244,13 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 10000 --sut
 
 ## Token 消耗估算
 
+**重要：所有模式都真实调用 API，按实际账单计费！**
+
 | 模式 | 消耗方式 | 估算 |
 |------|----------|------|
-| tollm | 输入+输出 token | 约 3 token/汉字 |
-| touser | 输入+输出 token | 约 1.5 token/汉字 |
-| toworld | 输入+输出 token | 约 1.5 token/汉字 |
+| tollm | 真实 API 调用 | 约 3 token/汉字 |
+| touser | 真实 API 调用 | 约 1.5 token/汉字 |
+| toworld | 真实 API 调用 | 约 1.5 token/汉字 |
 
 念诵1万字 ≈ 消耗1.5万 token (touser/toworld)
 念诵1万字 ≈ 消耗3万 token (tollm，双倍消耗)
@@ -250,7 +264,8 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 10000 --sut
 日志内容：
 - 执行时间
 - 每段念诵的经文内容
-- 消耗的 token 数
+- 大模型的响应
+- 真实的输入/输出 token 数
 - 总结统计
 
 查看历史日志：
@@ -308,11 +323,12 @@ exec(command="python3 scripts/merit_accumulator.py --stop")
 
 ## 注意事项
 
-1. **tollm 模式**：完全静默，不会打扰用户，但会持续消耗 token
-2. **toworld 模式**：需要系统支持 TTS，不支持时会降级为文本输出
-3. **tokens=0**：无限模式，必须通过 `--stop` 停止
-4. **状态文件**：位于 skill 根目录，名为 `.merit_state.json`
-5. **日志文件**：位于 `logs/` 目录，按时间命名
+1. **API Key 配置**：所有模式都需要配置 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
+2. **tollm 模式**：完全静默，不会打扰用户，但会持续消耗 token
+3. **toworld 模式**：需要系统支持 TTS，不支持时会降级为文本输出
+4. **tokens=0**：无限模式，必须通过 `--stop` 停止
+5. **状态文件**：位于 skill 根目录，名为 `.merit_state.json`
+6. **日志文件**：位于 `logs/` 目录，按时间命名
 
 ---
 
