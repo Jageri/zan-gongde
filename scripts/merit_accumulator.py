@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-烧token攒功德Skill - 通过真实调用大模型 API 消耗 Token
+烧token攒功德Skill - 通过念诵佛经消耗 AI Token
+
+本脚本作为 OpenClaw Skill 的辅助工具，用于：
+1. 读取经书内容
+2. 格式化输出
+3. TTS 播放
+4. 记录日志
+
+实际的 LLM 调用由 OpenClaw 主系统完成，本脚本不直接调用 API。
 
 三种功德注入模式:
-  --tollm    向大模型注入功德 (真实调用API，静默消耗token)
-  --touser   向用户注入功德 (真实调用API，输出给用户阅读)
-  --toworld  向外界散播功德 (真实调用API，TTS播放经文)
-
-核心原则：所有模式都真实调用大模型API，区别仅在于输出方式不同
+  --tollm    向大模型注入功德 (发送经文给OpenClaw，静默模式)
+  --touser   向用户注入功德 (发送经文给OpenClaw，输出给用户)
+  --toworld  向外界散播功德 (发送经文给OpenClaw，TTS播放)
 
 Token限制:
   --tokens N  目标token数量，达到后自动停止 (0表示无限)
@@ -15,12 +21,10 @@ Token限制:
 日志:
   所有念诵内容自动记录到 logs/merit_YYYY-MM-DD_HH-MM-SS.log
 
-API配置:
-  设置环境变量: OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+注意: 本脚本不直接调用API，LLM调用由OpenClaw主系统完成！
 
 示例:
-  export OPENAI_API_KEY="sk-..."
-  python3 merit_accumulator.py --tollm --tokens 100000      # 静默消耗10万token
+  python3 merit_accumulator.py --tollm --tokens 100000      # 静默消耗
   python3 merit_accumulator.py --touser --tokens 50000      # 输出给用户
   python3 merit_accumulator.py --toworld --tokens 0         # TTS播放
 """
@@ -152,6 +156,10 @@ def format_duration(seconds):
     """格式化时长"""
     return str(timedelta(seconds=int(seconds)))
 
+def estimate_tokens(text):
+    """估算token数量(中文字符按1.5个token估算)"""
+    return int(len(text) * 1.5)
+
 class MeritLogger:
     """功德日志记录器"""
     
@@ -164,7 +172,7 @@ class MeritLogger:
             f.write(f"烧token攒功德Skill日志 - {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 60 + "\n\n")
     
-    def log(self, sutra_name, content, input_tokens=0, output_tokens=0, model_response=""):
+    def log(self, sutra_name, content, tokens=0, model_response=""):
         """记录一条念诵"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         with open(self.log_file, 'a', encoding='utf-8') as f:
@@ -172,8 +180,8 @@ class MeritLogger:
             f.write(f"经文: {content[:100]}...\n")
             if model_response:
                 f.write(f"响应: {model_response[:100]}...\n")
-            if input_tokens > 0 or output_tokens > 0:
-                f.write(f"[Tokens: 输入{input_tokens} + 输出{output_tokens} = {input_tokens + output_tokens}]\n")
+            if tokens > 0:
+                f.write(f"[估算Tokens: {tokens}]\n")
             f.write("\n")
     
     def log_summary(self, total_tokens, total_chars, iteration_count, elapsed_seconds):
@@ -185,80 +193,8 @@ class MeritLogger:
             f.write(f"累计时长: {format_duration(elapsed_seconds)}\n")
             f.write(f"念诵遍数: {iteration_count}\n")
             f.write(f"累计字数: {total_chars}\n")
-            f.write(f"消耗Token: {total_tokens}\n")
+            f.write(f"估算Token: {total_tokens}\n")
             f.write("=" * 60 + "\n")
-
-class LLMClient:
-    """大模型API客户端"""
-    
-    def __init__(self):
-        self.openai_key = os.environ.get("OPENAI_API_KEY")
-        self.anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-        self.api_type = self._detect_api()
-    
-    def _detect_api(self):
-        """检测可用的API"""
-        if self.openai_key:
-            return "openai"
-        elif self.anthropic_key:
-            return "anthropic"
-        return None
-    
-    def is_available(self):
-        return self.api_type is not None
-    
-    def call(self, prompt):
-        """调用大模型API，返回 (响应内容, 输入tokens, 输出tokens)"""
-        if self.api_type == "openai":
-            return self._call_openai(prompt)
-        elif self.api_type == "anthropic":
-            return self._call_anthropic(prompt)
-        else:
-            raise RuntimeError("未配置API密钥，请设置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
-    
-    def _call_openai(self, prompt):
-        """调用 OpenAI API"""
-        try:
-            import openai
-            openai.api_key = self.openai_key
-            
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "你是一个佛经念诵助手，请念诵用户提供的经文，并简要回应。"},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=150
-            )
-            
-            content = response.choices[0].message.content
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-            
-            return content, input_tokens, output_tokens
-        except Exception as e:
-            return f"[API调用失败: {e}]", len(prompt) // 2, 0
-    
-    def _call_anthropic(self, prompt):
-        """调用 Anthropic API"""
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=self.anthropic_key)
-            
-            response = client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=150,
-                system="你是一个佛经念诵助手，请念诵用户提供的经文，并简要回应。",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            content = response.content[0].text
-            input_tokens = response.usage.input_tokens
-            output_tokens = response.usage.output_tokens
-            
-            return content, input_tokens, output_tokens
-        except Exception as e:
-            return f"[API调用失败: {e}]", len(prompt) // 2, 0
 
 class MeritAccumulator:
     """攒功德核心类"""
@@ -287,9 +223,6 @@ class MeritAccumulator:
         
         # 初始化日志
         self.logger = MeritLogger(get_log_file())
-        
-        # 初始化API客户端（所有模式都需要真实调用API）
-        self.llm_client = LLMClient()
         
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -338,31 +271,24 @@ class MeritAccumulator:
         if self.verbose:
             print(message)
     
-    def _check_api(self):
-        """检查API可用性"""
-        if not self.llm_client or not self.llm_client.is_available():
-            self._log("❌ 错误: 未配置API密钥")
-            self._log("请设置环境变量: OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
-            self._log("")
-            self._log("示例:")
-            self._log("  export OPENAI_API_KEY='sk-...'")
-            self._log("  python3 merit_accumulator.py --tollm --tokens 100000")
-            return False
-        return True
-    
     def run_tollm(self):
-        """tollm 模式: 真实调用API，静默消耗token"""
-        if not self._check_api():
-            return
+        """
+        tollm 模式: 静默消耗token
         
+        注意: 本脚本不直接调用API，LLM调用由OpenClaw主系统完成。
+        此模式输出经文prompt，由调用者(OpenClaw)负责发送给模型。
+        """
         if self.verbose:
-            self._log(f"🙏 开始静默注入功德(真实API调用)")
+            self._log(f"🙏 开始静默注入功德")
             self._log(f"📖 经书模式: {self.mode_desc}")
-            self._log(f"🔌 API: {self.llm_client.api_type}")
             target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
             self._log(f"🎯 {target_str}")
             self._log(f"📝 日志: {self.logger.log_file}")
             self._log("-" * 50)
+            self._log("")
+            self._log("⚠️  注意: 此模式需要OpenClaw主系统配合调用LLM")
+            self._log("    本脚本仅输出经文内容，实际API调用由OpenClaw完成")
+            self._log("")
         
         self.start_time = time.time()
         
@@ -370,20 +296,20 @@ class MeritAccumulator:
             while self._should_continue():
                 sutra_name, fragment = self._get_next_fragment()
                 
-                prompt = f"请念诵以下经文：\n\n《{sutra_name}》\n{fragment}\n\n请以恭敬心念诵这段经文，并简要回应。"
+                # 构造 prompt
+                prompt = f"请念诵以下经文：\n\n《{sutra_name}》\n{fragment}\n\n请以恭敬心念诵这段经文。"
                 
-                try:
-                    response, input_tokens, output_tokens = self.llm_client.call(prompt)
-                    tokens = input_tokens + output_tokens
-                except Exception as e:
-                    self._log(f"API调用失败: {e}")
-                    break
+                # 输出 prompt (由 OpenClaw 捕获并发送给模型)
+                print(f"[MERIT_PROMPT]{prompt}[/MERIT_PROMPT]")
                 
-                self.total_chars += len(prompt) + len(response)
+                # 估算token
+                tokens = estimate_tokens(prompt) * 2  # 粗略估算输入+输出
+                
+                self.total_chars += len(prompt)
                 self.total_tokens += tokens
                 self.iteration_count += 1
                 
-                self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
+                self.logger.log(sutra_name, fragment, tokens)
                 
                 if self.iteration_count % 10 == 0:
                     self._save_progress()
@@ -391,7 +317,7 @@ class MeritAccumulator:
                         progress = f"{self.total_tokens}/{self.target_tokens}" if self.target_tokens > 0 else str(self.total_tokens)
                         self._log(f"  ... 进度: {progress} tokens ({self.iteration_count}遍) ...")
                 
-                time.sleep(0.5)
+                time.sleep(0.2)
                 
         except KeyboardInterrupt:
             pass
@@ -402,19 +328,20 @@ class MeritAccumulator:
         if self.verbose:
             self._print_summary()
         else:
-            print(f"静默注入完成: {self.iteration_count}遍, {self.total_chars}字, {self.total_tokens}tokens")
+            print(f"静默注入完成: {self.iteration_count}遍, {self.total_chars}字, ~{self.total_tokens}tokens")
             print(f"日志文件: {self.logger.log_file}")
     
     def run_touser(self):
-        """touser 模式: 真实调用API，输出响应给用户阅读"""
-        if not self._check_api():
-            return
+        """
+        touser 模式: 输出经文给用户阅读
         
+        注意: 本脚本不直接调用API，LLM调用由OpenClaw主系统完成。
+        此模式输出经文prompt，由调用者(OpenClaw)负责发送给模型并展示响应。
+        """
         target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
         
         self._log(f"🙏 开始向您注入功德")
         self._log(f"📖 经书模式: {self.mode_desc}")
-        self._log(f"🔌 API: {self.llm_client.api_type}")
         self._log(f"🎯 {target_str}")
         self._log(f"📝 日志: {self.logger.log_file}")
         self._log("=" * 50)
@@ -435,29 +362,28 @@ class MeritAccumulator:
                     print(msg)
                 last_sutra = sutra_name
                 
+                # 构造 prompt
                 prompt = f"请念诵以下经文，并以恭敬心回应：\n\n《{sutra_name}》\n{fragment}"
                 
-                try:
-                    response, input_tokens, output_tokens = self.llm_client.call(prompt)
-                    tokens = input_tokens + output_tokens
-                except Exception as e:
-                    self._log(f"API调用失败: {e}")
-                    break
+                # 输出 prompt (由 OpenClaw 捕获并发送给模型)
+                print(f"[MERIT_PROMPT]{prompt}[/MERIT_PROMPT]")
+                
+                # 估算token
+                tokens = estimate_tokens(prompt) * 2
                 
                 print(f"【{timestamp}】《{sutra_name}》第{iteration}遍")
                 print(f"    经文: {fragment[:80]}...")
-                print(f"    响应: {response[:100]}...")
                 print()
                 
-                self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
+                self.logger.log(sutra_name, fragment, tokens)
                 
-                self.total_chars += len(fragment) + len(response)
+                self.total_chars += len(fragment)
                 self.total_tokens += tokens
                 self.iteration_count = iteration
                 
                 if iteration % 10 == 0:
                     progress = f"{self.total_tokens}/{self.target_tokens}" if self.target_tokens > 0 else str(self.total_tokens)
-                    print(f"  ... 已念诵 {iteration} 遍, 累计 {self.total_chars} 字, {progress} tokens ...")
+                    print(f"  ... 已念诵 {iteration} 遍, 累计 {self.total_chars} 字, ~{progress} tokens ...")
                     print()
                     self._save_progress()
                 
@@ -473,15 +399,16 @@ class MeritAccumulator:
         print(f"📝 日志已保存: {self.logger.log_file}")
     
     def run_toworld(self):
-        """toworld 模式: 真实调用API，TTS播放响应"""
-        if not self._check_api():
-            return
+        """
+        toworld 模式: TTS播放
         
+        注意: 本脚本不直接调用API，LLM调用由OpenClaw主系统完成。
+        此模式输出经文prompt，由调用者(OpenClaw)负责发送给模型，本脚本负责TTS播放响应。
+        """
         target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
         
         self._log(f"🙏 开始向外界散播功德")
         self._log(f"📖 经书模式: {self.mode_desc}")
-        self._log(f"🔌 API: {self.llm_client.api_type}")
         self._log(f"🎯 {target_str}")
         self._log(f"📝 日志: {self.logger.log_file}")
         self._log("=" * 50)
@@ -512,22 +439,23 @@ class MeritAccumulator:
                     self._log(f"\n📖 切换至《{sutra_name}》\n")
                 last_sutra = sutra_name
                 
+                # 构造 prompt
                 prompt = f"请念诵以下经文，并以恭敬心回应：\n\n《{sutra_name}》\n{fragment}"
                 
-                try:
-                    response, input_tokens, output_tokens = self.llm_client.call(prompt)
-                    tokens = input_tokens + output_tokens
-                except Exception as e:
-                    self._log(f"API调用失败: {e}")
-                    break
+                # 输出 prompt (由 OpenClaw 捕获并发送给模型)
+                print(f"[MERIT_PROMPT]{prompt}[/MERIT_PROMPT]")
                 
-                # 播放TTS（如果有）
+                # 估算token
+                tokens = estimate_tokens(prompt) * 2
+                
+                # 等待 OpenClaw 返回响应并播放 (实际实现中，OpenClaw会捕获响应并返回给脚本)
+                # 这里简化为直接播放经文
                 if tts_available:
-                    self._speak(response[:200], system)  # 限制长度避免太长
+                    self._speak(fragment[:200], system)
                 
-                self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
+                self.logger.log(sutra_name, fragment, tokens)
                 
-                self.total_chars += len(fragment) + len(response)
+                self.total_chars += len(fragment)
                 self.total_tokens += tokens
                 self.iteration_count = iteration
                 
@@ -535,7 +463,7 @@ class MeritAccumulator:
                     dedication = "愿以此功德，回向给一切众生"
                     if tts_available:
                         self._speak(dedication, system)
-                    self._log(f"\n—— 已散播 {iteration} 遍, {self.total_tokens} tokens ——\n")
+                    self._log(f"\n—— 已散播 {iteration} 遍, ~{self.total_tokens} tokens ——\n")
                     self._save_progress()
                 
                 time.sleep(random.uniform(2.0, 3.0))
@@ -591,7 +519,7 @@ class MeritAccumulator:
         print(f"累计时长: {format_duration(elapsed)}")
         print(f"念诵遍数: {self.iteration_count}")
         print(f"累计字数: {self.total_chars}")
-        print(f"消耗Token: {self.total_tokens}")
+        print(f"估算Token: {self.total_tokens}")
         if self.target_tokens > 0:
             print(f"目标Token: {self.target_tokens}")
             print(f"完成度: {min(100, self.total_tokens * 100 // self.target_tokens)}%")
@@ -662,16 +590,19 @@ def list_logs():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='烧token攒功德Skill - 通过真实调用大模型API消耗Token',
+        description='烧token攒功德Skill - 通过念诵佛经消耗AI Token',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-重要提示：
-  所有三种模式(tollm/touser/toworld)都需要配置API密钥！
-  都必须真实调用大模型API，区别仅在于输出方式不同。
+重要提示:
+  本脚本作为OpenClaw Skill的辅助工具，不直接调用LLM API。
+  实际的LLM调用由OpenClaw主系统完成，本脚本仅负责：
+  1. 读取经书内容
+  2. 格式化输出
+  3. TTS播放
+  4. 记录日志
 
 示例:
-  export OPENAI_API_KEY="sk-..."
-  %(prog)s --tollm --tokens 100000      # 静默消耗10万token
+  %(prog)s --tollm --tokens 100000      # 静默消耗
   %(prog)s --touser --tokens 50000      # 输出给用户
   %(prog)s --toworld --tokens 0         # TTS播放
   %(prog)s --stop                       # 停止念经

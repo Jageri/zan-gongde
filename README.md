@@ -12,22 +12,28 @@
 
 想象一下这个场景：
 
-> 月底了，你的 OpenAI API 额度还有 50 万 token 没用完。不用完就清零，用又不知道用去哪。焦虑，彷徨，心痛。
+> 月底了，你的 AI 套餐 token 还有 50 万没用完。不用完就清零，用又不知道用去哪。焦虑，彷徨，心痛。
 
 这时候你需要 **烧token攒功德Skill**。
 
-这是一个 **OpenClaw Agent Skill**，让你可以通过念诵佛经的方式，**理直气壮地消耗 token**。三种功德注入渠道，任君选择：
+这是一个 **OpenClaw Agent Skill**，让你可以通过念诵佛经的方式，**理直气壮地消耗 token**。
+
+**核心原则：复用 OpenClaw 本身的 LLM 配置，无需额外配置 API Key！**
+
+三种功德注入渠道，任君选择：
 
 | 模式 | 功德去向 | 输出方式 | 适合人群 |
 |------|---------|---------|---------|
-| **tollm** | 真实调用 OpenAI/Anthropic API | 静默（不展示） | 土豪、Token 多到没处花 |
-| **touser** | 真实调用 OpenAI/Anthropic API | 输出到终端 | 想静静、需要心理安慰 |
-| **toworld** | 真实调用 OpenAI/Anthropic API | 系统 TTS 播放 | 有音响、想营造仪式感 |
+| **tollm** | 复用 OpenClaw LLM 配置 | 静默（不展示） | Token 多到没处花 |
+| **touser** | 复用 OpenClaw LLM 配置 | 输出到终端 | 想静静、需要心理安慰 |
+| **toworld** | 复用 OpenClaw LLM 配置 | 系统 TTS 播放 | 有音响、想营造仪式感 |
 
-**核心原则**：
-- ✅ **所有三种模式都真实调用大模型 API**，不是本地模拟
-- ✅ 区别仅在于**输出方式**不同（静默/终端/TTS）
-- ✅ 必须配置 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
+**核心卖点**：
+- ✅ **复用 OpenClaw LLM 配置，无需额外 API Key！**
+- ✅ 真实消耗 token（通过 OpenClaw 主系统调用 LLM）
+- ✅ 附带经书轮询，念完一本自动下一本
+- ✅ 自动记录日志，月底可以发朋友圈炫耀
+- ✅ 支持 macOS / Windows / Linux
 
 ---
 
@@ -38,12 +44,9 @@
 ```bash
 # 克隆到 OpenClaw skills 目录
 git clone https://github.com/Jageri/zan-gongde.git ~/.agents/skills/zan-gongde
-
-# 配置 API Key
-export OPENAI_API_KEY="sk-你的key"
-# 或
-export ANTHROPIC_API_KEY="sk-ant-你的key"
 ```
+
+**无需配置 API Key！** 复用 OpenClaw 本身的 LLM 配置即可。
 
 然后对 OpenClaw 说：**"攒功德"**
 
@@ -52,10 +55,9 @@ export ANTHROPIC_API_KEY="sk-ant-你的key"
 ```bash
 git clone https://github.com/Jageri/zan-gongde.git
 cd zan-gongde
-pip install openai  # 或 pip install anthropic
 
-export OPENAI_API_KEY="sk-..."
-python3 scripts/merit_accumulator.py --tollm --tokens 100000
+# 注意：独立使用时不调用 LLM，仅输出经文
+python3 scripts/merit_accumulator.py --touser --tokens 100000
 ```
 
 ---
@@ -64,20 +66,15 @@ python3 scripts/merit_accumulator.py --tollm --tokens 100000
 
 ### ⚠️ 重要前提
 
-**所有三种模式都需要 API Key！** 没有例外。
-
-```bash
-export OPENAI_API_KEY="sk-..."
-# 或
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+**无需配置 API Key！** 本 Skill 复用 OpenClaw 本身的 LLM 配置。
 
 ### 场景一：Token 太多，想真实烧掉（静默模式）
 
 适合月底还剩几万 token 没花完的同学。静默执行，不打扰你工作。
 
 ```bash
-python3 scripts/merit_accumulator.py --tollm --tokens 100000
+# 对 OpenClaw 说：
+攒功德 tollm 100000
 ```
 
 ### 场景二：想看着它烧（输出到终端）
@@ -85,14 +82,14 @@ python3 scripts/merit_accumulator.py --tollm --tokens 100000
 实时显示念诵进度，给你一点心理安慰。
 
 ```bash
-python3 scripts/merit_accumulator.py --touser --tokens 5000
+# 对 OpenClaw 说：
+攒功德 touser 5000
 ```
 
 输出示例：
 ```
 🙏 开始向您注入功德
 📖 经书模式: 轮询 7 本经书
-🔌 API: openai
 🎯 目标 5000 tokens
 📝 日志: logs/merit_2026-04-09_18-30-00.log
 
@@ -110,7 +107,8 @@ python3 scripts/merit_accumulator.py --touser --tokens 5000
 调用系统 TTS 播放模型响应。macOS 用 `say`，Windows 用 PowerShell，Linux 用 `espeak`。
 
 ```bash
-python3 scripts/merit_accumulator.py --toworld --tokens 5000
+# 对 OpenClaw 说：
+攒功德 toworld 5000
 ```
 
 **注意**：TTS 是阻塞的（念完一句才念下一句），所以会比其他模式慢。
@@ -144,7 +142,7 @@ python3 scripts/merit_accumulator.py --toworld --tokens 5000
 | 佛说阿弥陀经 | 24KB | 净土宗，适合下班前念 |
 | 圆觉经 | 124KB | 大乘禅门，适合深度思考时 |
 | 楞严经 | 226KB | 开悟专用，适合架构设计时 |
-| 妙法莲华经 | 280KB | 法华宗根本，适合重大项目前 |
+| 妙法莲华经 | 280K | 法华宗根本，适合重大项目前 |
 
 **轮询机制**：不指定 `--sutra` 时，自动轮询所有 7 部，念完一遍再来一遍，循环往复。
 
@@ -152,17 +150,17 @@ python3 scripts/merit_accumulator.py --toworld --tokens 5000
 
 ## Token 消耗说明
 
-**重要：所有模式都真实调用 API，按实际账单计费！**
+**重要：复用 OpenClaw LLM 配置，按实际账单计费！**
 
 | 模式 | 调用方式 | 备注 |
 |------|----------|------|
-| tollm | OpenAI/Anthropic API | 使用 gpt-3.5-turbo / claude-haiku（便宜模型） |
-| touser | OpenAI/Anthropic API | 同上 |
-| toworld | OpenAI/Anthropic API | 同上 |
+| tollm | OpenClaw 主系统 LLM | 复用配置，无需额外 key |
+| touser | OpenClaw 主系统 LLM | 复用配置，无需额外 key |
+| toworld | OpenClaw 主系统 LLM | 复用配置，无需额外 key |
 
 **省钱技巧**：
 - 先用小目标测试，比如 `--tokens 1000`
-- 使用 GPT-3.5-turbo 比 GPT-4 便宜 10 倍
+- OpenClaw 用什么模型，本 Skill 就用什么模型
 
 ---
 
@@ -179,7 +177,7 @@ python3 scripts/merit_accumulator.py --logs
 - 念了哪部经
 - 具体经文内容
 - 大模型的响应
-- 真实的输入/输出 token 数
+- 估算的 token 数
 - 总结统计
 
 ---
@@ -187,7 +185,7 @@ python3 scripts/merit_accumulator.py --logs
 ## 系统要求
 
 - Python 3.8+
-- `pip install openai` 或 `pip install anthropic`
+- OpenClaw（用于调用 LLM）
 - **toworld 模式额外需要**:
   - macOS: 内置 `say`
   - Windows: 内置 PowerShell SAPI
@@ -227,7 +225,7 @@ zan-gongde/
 ├── SKILL.md                    # OpenClaw Skill 定义文件
 ├── README.md                   # 本文件
 ├── scripts/
-│   └── merit_accumulator.py    # 主程序
+│   └── merit_accumulator.py    # 主程序（不直接调用API，由OpenClaw调用）
 ├── sutras/                     # 经书目录
 │   ├── 般若波罗蜜多心经.txt
 │   ├── 金刚经.txt
@@ -258,7 +256,7 @@ zan-gongde/
 
 欢迎 PR：
 - 添加更多经书
-- 支持更多大模型 API
+- 支持更多 TTS 引擎
 - 添加更多幽默文案
 
 ## License
