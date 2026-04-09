@@ -15,7 +15,12 @@ description: |
   
   使用场景：AI 套餐 token 用不完时，通过"念经"方式消耗 token。
   
-  ⚠️ 注意：必须配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY 才能使用！
+  ⚠️ 注意：必须配置 API Key 才能使用！
+  
+  支持：
+  1. OpenAI: OPENAI_API_KEY
+  2. 自定义API: OPENAI_API_KEY + OPENAI_API_BASE (Azure、国产模型等)
+  3. Anthropic: ANTHROPIC_API_KEY
 ---
 
 # 烧token攒功德Skill
@@ -56,8 +61,24 @@ description: |
 4. 自动记录日志
 
 **API配置**:
-- 需设置环境变量 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
-- 使用便宜的模型（GPT-3.5-turbo / Claude Haiku）以降低成本
+支持多种API格式：
+
+1. **OpenAI 官方**:
+   ```bash
+   export OPENAI_API_KEY="sk-..."
+   ```
+
+2. **Azure OpenAI / 国产模型** (兼容 OpenAI API):
+   ```bash
+   export OPENAI_API_KEY="your-key"
+   export OPENAI_API_BASE="https://your-endpoint.com/v1"
+   export OPENAI_MODEL="your-model"  # 可选
+   ```
+
+3. **Anthropic**:
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   ```
 
 **调用方式**:
 ```python

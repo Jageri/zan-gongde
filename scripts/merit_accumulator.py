@@ -16,11 +16,21 @@ Token限制:
   所有念诵内容自动记录到 logs/merit_YYYY-MM-DD_HH-MM-SS.log
 
 API配置:
-  设置环境变量: OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+  支持多种API格式:
+  1. OpenAI: export OPENAI_API_KEY="sk-..."
+  2. 自定义API: export OPENAI_API_KEY="..." + export OPENAI_API_BASE="https://..."
+  3. Anthropic: export ANTHROPIC_API_KEY="sk-ant-..."
 
 示例:
+  # OpenAI
   export OPENAI_API_KEY="sk-..."
-  python3 merit_accumulator.py --tollm --tokens 100000      # 真实消耗10万token
+  python3 merit_accumulator.py --tollm --tokens 100000
+
+  # 国产模型(如通义千问)
+  export OPENAI_API_KEY="your-key"
+  export OPENAI_API_BASE="https://dashscope.aliyuncs.com/compatible-mode/v1"
+  export OPENAI_MODEL="qwen-turbo"
+  python3 merit_accumulator.py --tollm --tokens 100000
   python3 merit_accumulator.py --touser --tokens 50000      # 向用户输出5万token
   python3 merit_accumulator.py --toworld --tokens 0         # TTS无限播放
 """
@@ -189,41 +199,90 @@ class MeritLogger:
             f.write("=" * 60 + "\n")
 
 class LLMClient:
-    """大模型API客户端"""
+    """大模型API客户端 - 支持多种API格式"""
     
     def __init__(self):
-        self.openai_key = os.environ.get("OPENAI_API_KEY")
-        self.anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-        self.api_type = self._detect_api()
+        # 检测配置优先级：自定义 > OpenAI > Anthropic
+        self.api_key = None
+        self.api_type = None
+        self.base_url = None
+        self.model = None
+        
+        self._load_config()
     
-    def _detect_api(self):
-        """检测可用的API"""
-        if self.openai_key:
-            return "openai"
-        elif self.anthropic_key:
-            return "anthropic"
-        return None
+    def _load_config(self):
+        """加载API配置"""
+        # 1. 检查自定义 OpenAI 兼容 API
+        if os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_BASE"):
+            self.api_key = os.environ.get("OPENAI_API_KEY")
+            self.base_url = os.environ.get("OPENAI_API_BASE")
+            self.model = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+            self.api_type = "custom_openai"
+        # 2. 检查标准 OpenAI
+        elif os.environ.get("OPENAI_API_KEY"):
+            self.api_key = os.environ.get("OPENAI_API_KEY")
+            self.base_url = "https://api.openai.com/v1"
+            self.model = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
+            self.api_type = "openai"
+        # 3. 检查 Anthropic
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            self.api_key = os.environ.get("ANTHROPIC_API_KEY")
+            self.api_type = "anthropic"
     
     def is_available(self):
         return self.api_type is not None
     
+    def get_config_info(self):
+        """获取配置信息"""
+        if self.api_type == "custom_openai":
+            return f"自定义API ({self.base_url})"
+        elif self.api_type == "openai":
+            return "OpenAI"
+        elif self.api_type == "anthropic":
+            return "Anthropic"
+        return "未配置"
+    
     def call(self, prompt):
         """调用大模型API，返回 (响应内容, 输入tokens, 输出tokens)"""
-        if self.api_type == "openai":
-            return self._call_openai(prompt)
+        if self.api_type in ["openai", "custom_openai"]:
+            return self._call_openai_compatible(prompt)
         elif self.api_type == "anthropic":
             return self._call_anthropic(prompt)
         else:
-            raise RuntimeError("未配置API密钥，请设置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
+            raise RuntimeError(self._get_error_message())
     
-    def _call_openai(self, prompt):
-        """调用 OpenAI API"""
+    def _get_error_message(self):
+        """获取错误提示信息"""
+        return """未配置API密钥！
+
+支持以下配置方式：
+
+1. OpenAI 官方:
+   export OPENAI_API_KEY="sk-..."
+
+2. 自定义 OpenAI 兼容 API (Azure、国产模型等):
+   export OPENAI_API_KEY="your-key"
+   export OPENAI_API_BASE="https://your-api-endpoint.com/v1"
+   export OPENAI_MODEL="your-model-name"  # 可选
+
+3. Anthropic:
+   export ANTHROPIC_API_KEY="sk-ant-..."
+
+详细配置请参考 README.md
+"""
+    
+    def _call_openai_compatible(self, prompt):
+        """调用 OpenAI 兼容 API"""
         try:
             import openai
-            openai.api_key = self.openai_key
             
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",  # 使用便宜模型
+            client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
+            
+            response = client.chat.completions.create(
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "你是一个佛经念诵助手，请念诵用户提供的经文。"},
                     {"role": "user", "content": prompt}
@@ -243,10 +302,10 @@ class LLMClient:
         """调用 Anthropic API"""
         try:
             import anthropic
-            client = anthropic.Anthropic(api_key=self.anthropic_key)
+            client = anthropic.Anthropic(api_key=self.api_key)
             
             response = client.messages.create(
-                model="claude-3-haiku-20240307",  # 使用便宜模型
+                model="claude-3-haiku-20240307",
                 max_tokens=100,
                 system="你是一个佛经念诵助手，请念诵用户提供的经文。",
                 messages=[{"role": "user", "content": prompt}]

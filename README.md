@@ -44,13 +44,48 @@ git clone https://github.com/Jageri/zan-gongde.git
 cd zan-gongde
 ```
 
-### 配置 API Key
+### 配置 API
+
+### 方式一：OpenAI 官方
 
 ```bash
-# OpenAI
 export OPENAI_API_KEY="sk-你的key"
+```
 
-# 或 Anthropic
+### 方式二：Azure OpenAI 或其他代理
+
+```bash
+export OPENAI_API_KEY="your-key"
+export OPENAI_API_BASE="https://your-resource.openai.azure.com/openai/deployments/your-deployment"
+export OPENAI_MODEL="gpt-35-turbo"  # 你的模型名称
+```
+
+### 方式三：国产大模型（兼容 OpenAI API）
+
+**文心一言 (百度智能云)**:
+```bash
+export OPENAI_API_KEY="your-baidu-key"
+export OPENAI_API_BASE="https://qianfan.baidubce.com/v2"
+export OPENAI_MODEL="ernie-3.5-turbo"
+```
+
+**通义千问 (阿里云)**:
+```bash
+export OPENAI_API_KEY="your-aliyun-key"
+export OPENAI_API_BASE="https://dashscope.aliyuncs.com/compatible-mode/v1"
+export OPENAI_MODEL="qwen-turbo"
+```
+
+**智谱 AI (GLM)**:
+```bash
+export OPENAI_API_KEY="your-zhipu-key"
+export OPENAI_API_BASE="https://open.bigmodel.cn/api/paas/v4"
+export OPENAI_MODEL="glm-4-flash"
+```
+
+### 方式四：Anthropic
+
+```bash
 export ANTHROPIC_API_KEY="sk-ant-你的key"
 ```
 
