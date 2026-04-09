@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-攒功德主程序 - 通过真实调用大模型 API 消耗 Token
+烧token攒功德Skill - 通过真实调用大模型 API 消耗 Token
 
 三种功德注入模式:
-  --tollm    向大模型注入功德 (真实调用API，最大化消耗token)
-  --touser   向用户注入功德 (输出经文给用户阅读)
-  --toworld  向外界散播功德 (调用系统TTS播放经文)
+  --tollm    向大模型注入功德 (真实调用API，静默消耗token)
+  --touser   向用户注入功德 (真实调用API，输出给用户阅读)
+  --toworld  向外界散播功德 (真实调用API，TTS播放经文)
+
+核心原则：所有模式都真实调用大模型API，区别仅在于输出方式不同
 
 Token限制:
   --tokens N  目标token数量，达到后自动停止 (0表示无限)
@@ -18,9 +20,9 @@ API配置:
 
 示例:
   export OPENAI_API_KEY="sk-..."
-  python3 merit_accumulator.py --tollm --tokens 100000      # 真实消耗10万token
-  python3 merit_accumulator.py --touser --tokens 50000      # 向用户输出5万token
-  python3 merit_accumulator.py --toworld --tokens 0         # TTS无限播放
+  python3 merit_accumulator.py --tollm --tokens 100000      # 静默消耗10万token
+  python3 merit_accumulator.py --touser --tokens 50000      # 输出给用户
+  python3 merit_accumulator.py --toworld --tokens 0         # TTS播放
 """
 
 import argparse
@@ -159,7 +161,7 @@ class MeritLogger:
         
         with open(self.log_file, 'w', encoding='utf-8') as f:
             f.write("=" * 60 + "\n")
-            f.write(f"攒功德日志 - {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"烧token攒功德Skill日志 - {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 60 + "\n\n")
     
     def log(self, sutra_name, content, input_tokens=0, output_tokens=0, model_response=""):
@@ -167,9 +169,9 @@ class MeritLogger:
         timestamp = datetime.now().strftime("%H:%M:%S")
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(f"[{timestamp}] 《{sutra_name}》\n")
-            f.write(f"输入: {content[:100]}...\n")
+            f.write(f"经文: {content[:100]}...\n")
             if model_response:
-                f.write(f"输出: {model_response[:100]}...\n")
+                f.write(f"响应: {model_response[:100]}...\n")
             if input_tokens > 0 or output_tokens > 0:
                 f.write(f"[Tokens: 输入{input_tokens} + 输出{output_tokens} = {input_tokens + output_tokens}]\n")
             f.write("\n")
@@ -221,12 +223,12 @@ class LLMClient:
             openai.api_key = self.openai_key
             
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",  # 使用便宜模型
+                model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "你是一个佛经念诵助手，请念诵用户提供的经文。"},
+                    {"role": "system", "content": "你是一个佛经念诵助手，请念诵用户提供的经文，并简要回应。"},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=100  # 限制输出长度
+                max_tokens=150
             )
             
             content = response.choices[0].message.content
@@ -235,7 +237,6 @@ class LLMClient:
             
             return content, input_tokens, output_tokens
         except Exception as e:
-            # 如果调用失败，返回空响应和估算token
             return f"[API调用失败: {e}]", len(prompt) // 2, 0
     
     def _call_anthropic(self, prompt):
@@ -245,9 +246,9 @@ class LLMClient:
             client = anthropic.Anthropic(api_key=self.anthropic_key)
             
             response = client.messages.create(
-                model="claude-3-haiku-20240307",  # 使用便宜模型
-                max_tokens=100,
-                system="你是一个佛经念诵助手，请念诵用户提供的经文。",
+                model="claude-3-haiku-20240307",
+                max_tokens=150,
+                system="你是一个佛经念诵助手，请念诵用户提供的经文，并简要回应。",
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -287,8 +288,8 @@ class MeritAccumulator:
         # 初始化日志
         self.logger = MeritLogger(get_log_file())
         
-        # 初始化API客户端（仅tollm模式需要）
-        self.llm_client = LLMClient() if mode == 'tollm' else None
+        # 初始化API客户端（所有模式都需要真实调用API）
+        self.llm_client = LLMClient()
         
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -337,9 +338,8 @@ class MeritAccumulator:
         if self.verbose:
             print(message)
     
-    def run_tollm(self):
-        """tollm 模式: 真实调用大模型API，最大化消耗token"""
-        # 检查API可用性
+    def _check_api(self):
+        """检查API可用性"""
         if not self.llm_client or not self.llm_client.is_available():
             self._log("❌ 错误: 未配置API密钥")
             self._log("请设置环境变量: OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
@@ -347,6 +347,12 @@ class MeritAccumulator:
             self._log("示例:")
             self._log("  export OPENAI_API_KEY='sk-...'")
             self._log("  python3 merit_accumulator.py --tollm --tokens 100000")
+            return False
+        return True
+    
+    def run_tollm(self):
+        """tollm 模式: 真实调用API，静默消耗token"""
+        if not self._check_api():
             return
         
         if self.verbose:
@@ -362,13 +368,10 @@ class MeritAccumulator:
         
         try:
             while self._should_continue():
-                # 取一条经文
                 sutra_name, fragment = self._get_next_fragment()
                 
-                # 构造 prompt
                 prompt = f"请念诵以下经文：\n\n《{sutra_name}》\n{fragment}\n\n请以恭敬心念诵这段经文，并简要回应。"
                 
-                # 真实调用大模型API
                 try:
                     response, input_tokens, output_tokens = self.llm_client.call(prompt)
                     tokens = input_tokens + output_tokens
@@ -376,28 +379,23 @@ class MeritAccumulator:
                     self._log(f"API调用失败: {e}")
                     break
                 
-                # 更新统计
                 self.total_chars += len(prompt) + len(response)
                 self.total_tokens += tokens
                 self.iteration_count += 1
                 
-                # 记录日志
                 self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
                 
-                # 保存进度
                 if self.iteration_count % 10 == 0:
                     self._save_progress()
                     if self.verbose:
                         progress = f"{self.total_tokens}/{self.target_tokens}" if self.target_tokens > 0 else str(self.total_tokens)
                         self._log(f"  ... 进度: {progress} tokens ({self.iteration_count}遍) ...")
                 
-                # 避免API限流
                 time.sleep(0.5)
                 
         except KeyboardInterrupt:
             pass
         
-        # 记录总结
         elapsed = time.time() - self.start_time
         self.logger.log_summary(self.total_tokens, self.total_chars, self.iteration_count, elapsed)
         
@@ -408,11 +406,15 @@ class MeritAccumulator:
             print(f"日志文件: {self.logger.log_file}")
     
     def run_touser(self):
-        """touser 模式: 输出经文给用户阅读"""
+        """touser 模式: 真实调用API，输出响应给用户阅读"""
+        if not self._check_api():
+            return
+        
         target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
         
         self._log(f"🙏 开始向您注入功德")
         self._log(f"📖 经书模式: {self.mode_desc}")
+        self._log(f"🔌 API: {self.llm_client.api_type}")
         self._log(f"🎯 {target_str}")
         self._log(f"📝 日志: {self.logger.log_file}")
         self._log("=" * 50)
@@ -428,26 +430,28 @@ class MeritAccumulator:
                 sutra_name, fragment = self._get_next_fragment()
                 timestamp = format_duration(time.time() - self.start_time)
                 
-                # 如果换书了，提示一下
                 if sutra_name != last_sutra and last_sutra is not None:
                     msg = f"\n📖 切换至《{sutra_name}》\n"
                     print(msg)
-                    self.logger.log(sutra_name, f"[切换经书] 开始诵读《{sutra_name}》")
                 last_sutra = sutra_name
                 
-                # 计算token (估算)
-                tokens = len(fragment) * 2  # 粗略估算
+                prompt = f"请念诵以下经文，并以恭敬心回应：\n\n《{sutra_name}》\n{fragment}"
                 
-                # 输出给用户
+                try:
+                    response, input_tokens, output_tokens = self.llm_client.call(prompt)
+                    tokens = input_tokens + output_tokens
+                except Exception as e:
+                    self._log(f"API调用失败: {e}")
+                    break
+                
                 print(f"【{timestamp}】《{sutra_name}》第{iteration}遍")
-                print(f"    {fragment}")
+                print(f"    经文: {fragment[:80]}...")
+                print(f"    响应: {response[:100]}...")
                 print()
                 
-                # 记录日志
-                self.logger.log(sutra_name, fragment, tokens, 0)
+                self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
                 
-                # 更新统计
-                self.total_chars += len(fragment)
+                self.total_chars += len(fragment) + len(response)
                 self.total_tokens += tokens
                 self.iteration_count = iteration
                 
@@ -462,7 +466,6 @@ class MeritAccumulator:
         except KeyboardInterrupt:
             print("\n\n念诵被中断...")
         
-        # 记录总结
         elapsed = time.time() - self.start_time
         self.logger.log_summary(self.total_tokens, self.total_chars, self.iteration_count, elapsed)
         
@@ -470,11 +473,15 @@ class MeritAccumulator:
         print(f"📝 日志已保存: {self.logger.log_file}")
     
     def run_toworld(self):
-        """toworld 模式: 调用系统TTS播放经文"""
+        """toworld 模式: 真实调用API，TTS播放响应"""
+        if not self._check_api():
+            return
+        
         target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
         
         self._log(f"🙏 开始向外界散播功德")
         self._log(f"📖 经书模式: {self.mode_desc}")
+        self._log(f"🔌 API: {self.llm_client.api_type}")
         self._log(f"🎯 {target_str}")
         self._log(f"📝 日志: {self.logger.log_file}")
         self._log("=" * 50)
@@ -484,10 +491,9 @@ class MeritAccumulator:
         
         if not tts_available:
             self._log(f"⚠️  当前系统({system})未检测到可用的TTS工具")
-            self._log("将转为输出文本模式，您可以手动复制到TTS工具播放")
-            return self.run_toworld_text_only()
-        
-        self._log(f"✅ 检测到{system}系统TTS")
+            self._log("将转为输出文本模式...")
+        else:
+            self._log(f"✅ 检测到{system}系统TTS")
         self._log("")
         
         self.start_time = time.time()
@@ -499,82 +505,40 @@ class MeritAccumulator:
                 iteration += 1
                 sutra_name, fragment = self._get_next_fragment()
                 
-                # 如果换书了，播报一下
                 if sutra_name != last_sutra and last_sutra is not None:
                     switch_msg = f"接下来诵读《{sutra_name}》"
-                    self._speak(switch_msg, system)
-                    self.logger.log(sutra_name, f"[TTS切换] {switch_msg}")
+                    if tts_available:
+                        self._speak(switch_msg, system)
                     self._log(f"\n📖 切换至《{sutra_name}》\n")
                 last_sutra = sutra_name
                 
-                # 计算token
-                tokens = len(fragment) * 2
+                prompt = f"请念诵以下经文，并以恭敬心回应：\n\n《{sutra_name}》\n{fragment}"
                 
-                # 播放TTS（阻塞等待）
-                self._speak(fragment, system)
+                try:
+                    response, input_tokens, output_tokens = self.llm_client.call(prompt)
+                    tokens = input_tokens + output_tokens
+                except Exception as e:
+                    self._log(f"API调用失败: {e}")
+                    break
                 
-                # 记录日志
-                self.logger.log(sutra_name, fragment, tokens, 0)
+                # 播放TTS（如果有）
+                if tts_available:
+                    self._speak(response[:200], system)  # 限制长度避免太长
                 
-                # 更新统计
-                self.total_chars += len(fragment)
+                self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
+                
+                self.total_chars += len(fragment) + len(response)
                 self.total_tokens += tokens
                 self.iteration_count = iteration
                 
                 if iteration % 20 == 0:
                     dedication = "愿以此功德，回向给一切众生"
-                    self._speak(dedication, system)
-                    self.logger.log("回向", dedication)
+                    if tts_available:
+                        self._speak(dedication, system)
                     self._log(f"\n—— 已散播 {iteration} 遍, {self.total_tokens} tokens ——\n")
                     self._save_progress()
                 
                 time.sleep(random.uniform(2.0, 3.0))
-                
-        except KeyboardInterrupt:
-            print("\n\n散播被中断...")
-        
-        # 记录总结
-        elapsed = time.time() - self.start_time
-        self.logger.log_summary(self.total_tokens, self.total_chars, self.iteration_count, elapsed)
-        
-        self._print_summary()
-        print(f"📝 日志已保存: {self.logger.log_file}")
-    
-    def run_toworld_text_only(self):
-        """toworld模式的纯文本版本"""
-        self.start_time = time.time()
-        iteration = 0
-        last_sutra = None
-        
-        try:
-            while self._should_continue():
-                iteration += 1
-                sutra_name, fragment = self._get_next_fragment()
-                
-                if sutra_name != last_sutra and last_sutra is not None:
-                    print(f"\n📖 《{sutra_name}》\n")
-                    self.logger.log(sutra_name, f"[切换经书] 开始诵读《{sutra_name}》")
-                last_sutra = sutra_name
-                
-                tokens = len(fragment) * 2
-                
-                print(f"[{sutra_name}] {fragment}")
-                
-                self.logger.log(sutra_name, fragment, tokens, 0)
-                
-                self.total_chars += len(fragment)
-                self.total_tokens += tokens
-                self.iteration_count = iteration
-                
-                if iteration % 20 == 0:
-                    print()
-                    print("—— 回向 ——")
-                    print("愿以此功德,回向给一切众生")
-                    print()
-                    self.logger.log("回向", "愿以此功德,回向给一切众生")
-                    self._save_progress()
-                
-                time.sleep(random.uniform(1.0, 2.0))
                 
         except KeyboardInterrupt:
             print("\n\n散播被中断...")
@@ -698,29 +662,31 @@ def list_logs():
 
 def main():
     parser = argparse.ArgumentParser(
-        description='攒功德 - 通过真实调用大模型API消耗Token',
+        description='烧token攒功德Skill - 通过真实调用大模型API消耗Token',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+重要提示：
+  所有三种模式(tollm/touser/toworld)都需要配置API密钥！
+  都必须真实调用大模型API，区别仅在于输出方式不同。
+
 示例:
   export OPENAI_API_KEY="sk-..."
-  %(prog)s --tollm --tokens 100000      # 真实消耗10万token
-  %(prog)s --touser --tokens 50000      # 向用户输出5万token
-  %(prog)s --toworld --tokens 0         # TTS无限播放
+  %(prog)s --tollm --tokens 100000      # 静默消耗10万token
+  %(prog)s --touser --tokens 50000      # 输出给用户
+  %(prog)s --toworld --tokens 0         # TTS播放
   %(prog)s --stop                       # 停止念经
   %(prog)s --status                     # 查看状态
   %(prog)s --logs                       # 查看历史日志
-
-注意: tollm模式需要配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
         """
     )
     
     mode_group = parser.add_mutually_exclusive_group(required=False)
     mode_group.add_argument('--tollm', action='store_true',
-                          help='向大模型注入功德(真实调用API，需要配置API密钥)')
+                          help='向大模型注入功德(静默消耗token)')
     mode_group.add_argument('--touser', action='store_true',
-                          help='向用户注入功德(输出经文给用户)')
+                          help='向用户注入功德(输出给用户阅读)')
     mode_group.add_argument('--toworld', action='store_true',
-                          help='向外界散播功德(调用系统TTS播放)')
+                          help='向外界散播功德(TTS播放)')
     
     parser.add_argument('--tokens', type=int, default=10000, metavar='N',
                        help='目标token数量，达到后自动停止 (默认: 10000, 0表示无限)')

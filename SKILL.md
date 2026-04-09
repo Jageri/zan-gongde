@@ -1,21 +1,27 @@
 ---
 name: zan-gongde
 description: |
-  攒功德 Skill - 娱乐性工具，用于消耗多余的 AI Token。
+  烧token攒功德Skill - OpenClaw Agent Skill，用于通过真实调用大模型API消耗多余的 AI Token。
+  
+  核心原则：所有三种模式(tollm/touser/toworld)都真实调用 OpenAI/Anthropic API，区别仅在于输出方式不同。
   
   当用户说"攒功德"、"念经"、"烧token"、"消耗token"时调用此 skill。
   
-  提供三种功德注入方式：
-  1. tollm - 向大模型注入功德：完全静默，输入输出都消耗token，不打扰用户
-  2. touser - 向用户注入功德：生成佛经经文内容，通过 OpenClaw 发送给用户
-  3. toworld - 向外界散播功德：调用系统TTS播放经文（macOS用`say`，Windows用PowerShell SAPI）
+  三种功德注入方式：
+  1. tollm - 向大模型注入功德：真实调用API，静默消耗token，不打扰用户
+  2. touser - 向用户注入功德：真实调用API，输出响应给用户阅读
+  3. toworld - 向外界散播功德：真实调用API，TTS播放模型响应
   
   使用场景：AI 套餐 token 用不完时，通过"念经"方式消耗 token。
+  
+  注意：所有模式都需要配置 OPENAI_API_KEY 或 ANTHROPIC_API_KEY！
 ---
 
-# 攒功德 Skill
+# 烧token攒功德Skill
 
-一个娱乐性质的 skill，用于在 AI Token 过剩时通过"念经"方式消耗 token。
+一个 OpenClaw Agent Skill，用于在 AI Token 过剩时通过真实调用大模型API、念诵佛经的方式消耗 token。
+
+**核心原则：所有三种模式(tollm/touser/toworld)都真实调用 OpenAI/Anthropic API，区别仅在于输出方式不同。**
 
 ## 触发条件
 
@@ -31,20 +37,20 @@ description: |
 ### 模式一: tollm - 向大模型注入功德（完全静默）
 
 **特点**:
+- ✅ 真实调用 OpenAI/Anthropic API
 - ✅ 完全静默，用户不会收到任何消息
 - ✅ 输入+输出都消耗 token，最大化烧 token
 - ✅ 适合后台静默消耗
 
 **执行逻辑**:
-1. 持续生成大批量经文作为输入
-2. **真实调用大模型API**（OpenAI/Anthropic），获取响应
-3. 累计真实的输入+输出token消耗
-4. 不向用户展示任何内容（静默执行）
-5. 自动记录日志到 `logs/merit_YYYY-MM-DD_HH-MM-SS.log`
+1. 构造经文 prompt
+2. **真实调用大模型API**，获取响应
+3. 不向用户展示任何内容（静默执行）
+4. 自动记录日志
 
 **API配置**:
 - 需设置环境变量 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
-- 使用便宜的模型（GPT-3.5-turbo / Claude Haiku）以降低成本
+- 所有三种模式都需要此配置
 
 **调用方式**:
 ```python
@@ -59,16 +65,19 @@ exec(command="python3 scripts/merit_accumulator.py --tollm --tokens 100000 --qui
 ### 模式二: touser - 向用户注入功德
 
 **特点**:
-- 📱 经文通过 OpenClaw 发送给用户
-- 📊 实时显示念诵进度（按token统计）
+- 📱 真实调用 API，响应通过 OpenClaw 发送给用户
+- 📊 实时显示念诵进度（按真实token统计）
 - 🎨 格式化输出，有仪式感
 - 📝 自动记录日志
 
 **执行逻辑**:
-1. 调用脚本生成格式化经文
-2. 逐段输出（通过 OpenClaw 发送）
-3. 显示时间戳、遍数、token统计
-4. 记录日志
+1. 构造经文 prompt
+2. **真实调用大模型API**，获取响应
+3. 逐段输出经文和模型响应（通过 OpenClaw 发送）
+4. 显示时间戳、遍数、token统计
+5. 记录日志
+
+**注意**：同样需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`
 
 **输出示例**:
 ```
@@ -105,7 +114,7 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 100000")
 ### 模式三: toworld - 向外界散播功德（TTS）
 
 **特点**:
-- 🔊 调用系统 TTS 播放经文
+- 🔊 真实调用 API，TTS 播放模型响应
 - 🖥️ 自动检测操作系统
 - 📢 让功德通过声音传播
 - 📝 自动记录日志
@@ -119,10 +128,13 @@ exec(command="python3 scripts/merit_accumulator.py --touser --tokens 100000")
 | Linux | `espeak`/`festival` | 可能需要手动安装 |
 
 **执行逻辑**:
-1. 检测操作系统类型
-2. 调用对应 TTS 命令播放经文（阻塞等待）
-3. 每20遍自动回向
-4. 记录日志
+1. 构造经文 prompt
+2. **真实调用大模型API**，获取响应
+3. 调用系统 TTS 播放模型响应（阻塞等待）
+4. 每20遍自动回向
+5. 记录日志
+
+**注意**：同样需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`，加上 TTS 工具
 
 **调用方式**:
 ```python
