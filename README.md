@@ -72,16 +72,18 @@ git clone https://github.com/Jageri/zan-gongde.git ~/.agents/skills/zan-gongde
 
 ## 使用方法
 
-在 OpenClaw 中直接说:
+**直接在 OpenClaw 对话中输入，无需运行任何脚本：**
 
-```bash
-攒功德              # 默认消耗 10000 tokens,显示念诵内容
+```
+攒功德              # 默认消耗 10000 tokens，显示念诵内容
 攒功德 50000        # 消耗 50000 tokens
-攒功德 tollm 100000 # 静默模式,后台消耗 10万 tokens
+攒功德 tollm 100000 # 静默模式，后台消耗 10万 tokens
 攒功德 toworld 5000 # TTS 播放模式
-攒功德 ddos 100000  # 高并发模式,快速消耗 10万 token
+攒功德 ddos 100000  # 高并发模式，快速消耗 10万 token
 攒功德 ddos 50000 --workers 20  # 20并发消耗5万token
 ```
+
+**⚠️ 重要：不要运行任何 Python 脚本！直接在 OpenClaw 聊天窗口输入上述指令即可。**
 
 ### 停止任务
 
@@ -278,14 +280,14 @@ zan-gongde/
 ├── SKILL.md                      # OpenClaw Skill 配置
 ├── README.md                     # 本文件
 ├── scripts/
-│   └── merit_accumulator.py      # 核心脚本（四种模式）
-├── sutras/                       # 📚 996部佛经，25MB！
+│   └── merit_accumulator.py      # 核心脚本(四种模式)
+├── sutras/                       # 📚 996部佛经,25MB!
 │   ├── 华严经_01.md ~ 华严经_80.md    # 华严经全本
 │   ├── 大宝积经_001.md ~ 大宝积经_120.md # 大宝积经全本
 │   ├── 地藏经.txt
 │   ├── 金刚经.txt
 │   └── ... (还有900+部)
-└── logs/                         # 日志目录（自动生成）
+└── logs/                         # 日志目录(自动生成)
 ```
 
 ---

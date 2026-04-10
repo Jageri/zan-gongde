@@ -231,6 +231,239 @@ A: 完全静默，不输出任何内容，适合后台大量消耗 token。
 
 ---
 
+## 执行指令（OpenClaw 必须遵循）
+
+当用户触发此 skill 时，按以下步骤执行：
+
+### Step 1: 解析参数
+
+```python
+import re
+
+def parse_merit_args(user_input):
+    """解析用户输入"""
+    # 默认值
+    mode = "touser"
+    target_tokens = 10000
+    workers = 10
+    
+    # 检查模式
+    if "tollm" in user_input:
+        mode = "tollm"
+    elif "toworld" in user_input:
+        mode = "toworld"
+    elif "ddos" in user_input:
+        mode = "ddos"
+    
+    # 提取数字（token 数）
+    numbers = re.findall(r'\d+', user_input)
+    if numbers:
+        target_tokens = int(numbers[0])
+    
+    # 提取 workers
+    workers_match = re.search(r'--workers\s+(\d+)', user_input)
+    if workers_match:
+        workers = int(workers_match.group(1))
+    
+    return mode, target_tokens, workers
+
+mode, target_tokens, workers = parse_merit_args(user_input)
+```
+
+### Step 2: 加载经书
+
+```python
+import random
+from pathlib import Path
+
+SUTRAS_DIR = Path("~/.agents/skills/zan-gongde/sutras").expanduser()
+
+def load_sutras():
+    """加载所有经书文件"""
+    files = list(SUTRAS_DIR.glob("*.txt")) + list(SUTRAS_DIR.glob("*.md"))
+    sutras = []
+    for f in files:
+        try:
+            content = f.read_text(encoding='utf-8')
+            # 分段，每段100-300字
+            for i in range(0, len(content), 200):
+                fragment = content[i:i+200].strip()
+                if len(fragment) > 50:
+                    sutras.append((f.stem, fragment))
+        except:
+            continue
+    random.shuffle(sutras)
+    return sutras
+
+sutras = load_sutras()
+if not sutras:
+    sutras = [("默认经文", "南无阿弥陀佛，南无本师释迦牟尼佛")]
+```
+
+### Step 3: 执行念诵
+
+#### 普通模式 (tollm/touser/toworld)
+
+```python
+import time
+
+def estimate_tokens(text):
+    """估算 token 数（中文）"""
+    return int(len(text) * 1.5)
+
+def chant_sutra(mode, target_tokens, sutras):
+    """执行念诵"""
+    total_tokens = 0
+    iteration = 0
+    start_time = time.time()
+    
+    # 显示开始信息
+    print(f"🙏 开始攒功德")
+    print(f"🎯 目标: {target_tokens} tokens")
+    print(f"📖 模式: {mode}")
+    print("=" * 50)
+    
+    while total_tokens < target_tokens:
+        iteration += 1
+        
+        # 获取经文片段
+        sutra_name, fragment = sutras[iteration % len(sutras)]
+        
+        # 构造 prompt
+        prompt = f"请念诵以下经文，并以恭敬心简短回应（50字以内）：\n\n《{sutra_name}》\n{fragment[:100]}"
+        
+        # ⚠️ 调用 LLM（真实消耗 token）
+        response = chat(prompt)  # 使用 OpenClaw 内置 chat 函数
+        
+        # 估算 token
+        input_tokens = estimate_tokens(prompt)
+        output_tokens = estimate_tokens(response)
+        tokens_this_round = input_tokens + output_tokens
+        total_tokens += tokens_this_round
+        
+        # 根据模式输出
+        if mode == "touser":
+            print(f"\n【第{iteration}遍】《{sutra_name}》")
+            print(f"    经文: {fragment[:50]}...")
+            print(f"    响应: {response[:50]}...")
+            print(f"    [本次+{tokens_this_round} | 累计{total_tokens}/{target_tokens}]")
+        elif mode == "toworld":
+            # TTS 播放
+            import subprocess
+            subprocess.run(["say", response[:100]], check=False)
+        # tollm 模式静默
+        
+        # 检查停止信号
+        if iteration % 10 == 0:
+            # 每10轮检查一次
+            pass
+    
+    # 完成总结
+    elapsed = time.time() - start_time
+    print("\n" + "=" * 50)
+    print("🙏 功德圆满！")
+    print(f"   目标: {target_tokens} tokens")
+    print(f"   实际消耗: {total_tokens} tokens")
+    print(f"   迭代次数: {iteration}")
+    print(f"   耗时: {elapsed:.1f}秒")
+    print(f"   平均速率: {total_tokens/elapsed:.0f} tokens/秒")
+
+# 执行
+chant_sutra(mode, target_tokens, sutras)
+```
+
+#### DDoS 模式
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+def chant_sutra_ddos(target_tokens, sutras, max_workers=10):
+    """DDoS 高并发模式"""
+    total_tokens = 0
+    success_count = 0
+    error_count = 0
+    lock = threading.Lock()
+    start_time = time.time()
+    stop_flag = threading.Event()
+    
+    print(f"🙏 开始DDoS攻击佛祖")
+    print(f"⚡ 并发数: {max_workers}")
+    print(f"🎯 目标: {target_tokens} tokens")
+    print("=" * 50)
+    
+    def worker():
+        nonlocal total_tokens, success_count, error_count
+        local_tokens = 0
+        local_success = 0
+        local_error = 0
+        
+        while not stop_flag.is_set():
+            try:
+                # 随机选择经文
+                sutra_name, fragment = random.choice(sutras)
+                prompt = f"请念诵以下经文，并以恭敬心简短回应（30字以内）：\n\n《{sutra_name}》\n{fragment[:80]}"
+                
+                # 调用 LLM
+                response = chat(prompt)
+                
+                # 估算
+                tokens = estimate_tokens(prompt) + estimate_tokens(response)
+                local_tokens += tokens
+                local_success += 1
+                
+                # 检查是否达标
+                with lock:
+                    if total_tokens >= target_tokens:
+                        stop_flag.set()
+                        break
+                    total_tokens += tokens
+                    
+            except Exception as e:
+                local_error += 1
+                time.sleep(0.5)  # 错误时降速
+        
+        return local_tokens, local_success, local_error
+    
+    # 启动并发
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(worker) for _ in range(max_workers)]
+        
+        # 实时显示进度
+        last_report = 0
+        while not stop_flag.is_set() and total_tokens < target_tokens:
+            time.sleep(1)
+            elapsed = time.time() - start_time
+            rate = total_tokens / elapsed if elapsed > 0 else 0
+            
+            if total_tokens - last_report > target_tokens // 10:  # 每10%报告一次
+                print(f"  [状态] Token:{total_tokens}/{target_tokens} ({100*total_tokens//target_tokens}%) | 速率:{rate:.0f}/s")
+                last_report = total_tokens
+        
+        stop_flag.set()
+    
+    # 总结
+    elapsed = time.time() - start_time
+    print("\n" + "=" * 50)
+    print("🙏 DDoS功德回向")
+    print(f"   目标: {target_tokens}")
+    print(f"   实际: {total_tokens}")
+    print(f"   耗时: {elapsed:.1f}秒")
+    print(f"   速率: {total_tokens/elapsed:.0f} tokens/秒")
+
+# 根据模式执行
+if mode == "ddos":
+    chant_sutra_ddos(target_tokens, sutras, workers)
+else:
+    chant_sutra(mode, target_tokens, sutras)
+```
+
+### Step 4: 停止条件
+
+用户说"停止攒功德"时，立即设置停止标志，结束循环。
+
+---
+
 ## 免责
 
 ⚠️ 纯属娱乐，真实效果是消耗你的 OpenClaw Token 🙏
