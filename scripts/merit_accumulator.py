@@ -47,6 +47,7 @@ import platform
 from pathlib import Path
 from datetime import datetime, timedelta
 from itertools import cycle
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 经书目录
 SUTRAS_DIR = Path(__file__).parent.parent / "sutras"
@@ -318,6 +319,280 @@ class LLMClient:
             return content, input_tokens, output_tokens
         except Exception as e:
             return f"[API调用失败: {e}]", len(prompt) // 2, 0
+
+class DDOSMode:
+    """
+    DDoS佛祖模式 - 高并发快速消耗token
+    
+    特点：
+    - 使用 ThreadPoolExecutor 实现真正的并发
+    - 自动降速：检测到 429 错误时减少并发数或增加延迟
+    - Token 精确累加：每个 worker 返回真实消耗量
+    - 支持动态调整并发数
+    """
+    
+    def __init__(self, target_tokens, max_workers=10, verbose=True):
+        self.target_tokens = target_tokens
+        self.max_workers = max_workers  # 最大并发数
+        self.current_workers = max_workers  # 当前并发数
+        self.verbose = verbose
+        
+        # 加载经书
+        self.sutra_cycle, self.sutra_names = load_all_sutras()
+        
+        # 统计
+        self.start_time = None
+        self.total_tokens = 0
+        self.total_chars = 0
+        self.iteration_count = 0
+        self.success_count = 0
+        self.fail_count = 0
+        self.stop_requested = False
+        
+        # 降速状态
+        self.consecutive_errors = 0
+        self.min_delay = 0.1  # 最小延迟（秒）
+        self.current_delay = 0.1  # 当前延迟
+        self.max_delay = 5.0  # 最大延迟
+        
+        # 线程安全
+        self._lock = None
+        
+        # 日志
+        self.logger = MeritLogger(get_log_file())
+        
+        # API客户端
+        self.llm_client = LLMClient()
+        
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _signal_handler(self, signum, frame):
+        self.stop_requested = True
+    
+    def _get_next_fragment(self):
+        """获取下一个经文片段（线程安全）"""
+        with self._lock:
+            sutra_name, fragment = next(self.sutra_cycle)
+            return sutra_name, fragment
+    
+    def _is_rate_limit_error(self, error_msg):
+        """判断是否是 rate limit 错误"""
+        error_lower = error_msg.lower()
+        return any(keyword in error_lower for keyword in [
+            '429', 'rate limit', 'too many requests', 'rate_limit',
+            '请求过于频繁', '速率限制', ' quota', 'exceeded'
+        ])
+    
+    def _adjust_speed(self, is_error=False):
+        """调整速度（降速或恢复）"""
+        if is_error:
+            self.consecutive_errors += 1
+            
+            # 连续错误，增加延迟
+            if self.current_delay < self.max_delay:
+                self.current_delay = min(self.max_delay, self.current_delay * 1.5)
+            
+            # 如果连续错误太多，减少并发数
+            if self.consecutive_errors >= 3 and self.current_workers > 1:
+                self.current_workers = max(1, self.current_workers - 1)
+                self.consecutive_errors = 0
+                if self.verbose:
+                    print(f"⚠️ 降速: 并发数调整为 {self.current_workers}")
+        else:
+            self.consecutive_errors = 0
+            # 成功，逐渐恢复速度
+            if self.current_delay > self.min_delay:
+                self.current_delay = max(self.min_delay, self.current_delay * 0.95)
+            if self.success_count % 20 == 0 and self.current_workers < self.max_workers:
+                self.current_workers = min(self.max_workers, self.current_workers + 1)
+    
+    def _worker_call(self):
+        """
+        单个 worker 的工作：调用一次 LLM
+        返回 (success, tokens_consumed, error_msg)
+        """
+        if self.stop_requested:
+            return False, 0, None
+        
+        # 获取经文
+        sutra_name, fragment = self._get_next_fragment()
+        
+        # 构造 prompt
+        prompt = f"请念诵以下经文，并以恭敬心简短回应（50字以内）：
+
+《{sutra_name}》
+{fragment}"
+        
+        try:
+            # 调用 API
+            response, input_tokens, output_tokens = self.llm_client.call(prompt)
+            tokens = input_tokens + output_tokens
+            
+            # 检查是否 API 错误
+            if response.startswith('[API调用失败'):
+                return False, 0, response
+            
+            # 成功，更新统计
+            with self._lock:
+                self.total_tokens += tokens
+                self.total_chars += len(prompt) + len(response)
+                self.iteration_count += 1
+                self.success_count += 1
+            
+            # 记录日志
+            self.logger.log(sutra_name, fragment, input_tokens, output_tokens, response)
+            
+            # 调整速度（成功）
+            self._adjust_speed(is_error=False)
+            
+            return True, tokens, None
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # 判断是否是 rate limit
+            is_rate_limit = self._is_rate_limit_error(error_msg)
+            
+            # 调整速度（失败）
+            self._adjust_speed(is_error=True)
+            
+            with self._lock:
+                self.fail_count += 1
+            
+            return False, 0, error_msg
+    
+    def _should_continue(self):
+        """检查是否应该继续"""
+        if self.stop_requested:
+            return False
+        
+        if self.target_tokens > 0 and self.total_tokens >= self.target_tokens:
+            return False
+        
+        state = load_state()
+        if state and state.get('stop_requested'):
+            return False
+        
+        return True
+    
+    def _save_progress(self):
+        """保存进度"""
+        state = {
+            'mode': 'ddos',
+            'sutras': self.sutra_names,
+            'start_time': self.start_time,
+            'elapsed_seconds': time.time() - self.start_time,
+            'total_chars': self.total_chars,
+            'total_tokens': self.total_tokens,
+            'iteration_count': self.iteration_count,
+            'target_tokens': self.target_tokens,
+            'current_workers': self.current_workers,
+            'status': 'running'
+        }
+        save_state(state)
+    
+    def _log(self, message):
+        """输出日志"""
+        if self.verbose:
+            print(message)
+    
+    def run(self):
+        """运行 DDoS 模式"""
+        if not self.llm_client or not self.llm_client.is_available():
+            self._log("❌ 错误: 未配置API密钥")
+            self._log("请设置环境变量: OPENAI_API_KEY 或 ANTHROPIC_API_KEY")
+            return
+        
+        import threading
+        self._lock = threading.Lock()
+        
+        self._log(f"🙏 开始DDoS攻击佛祖")
+        self._log(f"📖 经书模式: 轮询 {len(self.sutra_names)} 本经书")
+        self._log(f"🔌 API: {self.llm_client.api_type}")
+        self._log(f"⚡ 最大并发: {self.max_workers}")
+        target_str = f"目标 {self.target_tokens} tokens" if self.target_tokens > 0 else "无限模式"
+        self._log(f"🎯 {target_str}")
+        self._log(f"📝 日志: {self.logger.log_file}")
+        self._log("=" * 50)
+        self._log("")
+        
+        self.start_time = time.time()
+        last_report_time = self.start_time
+        
+        try:
+            with ThreadPoolExecutor(max_workers=self.current_workers) as executor:
+                futures = []
+                
+                while self._should_continue():
+                    # 提交任务
+                    future = executor.submit(self._worker_call)
+                    futures.append(future)
+                    
+                    # 应用延迟
+                    time.sleep(self.current_delay)
+                    
+                    # 每秒报告一次状态
+                    current_time = time.time()
+                    if current_time - last_report_time >= 1.0:
+                        elapsed = current_time - self.start_time
+                        rate = self.total_tokens / elapsed if elapsed > 0 else 0
+                        progress = min(100, int(self.total_tokens * 100 / self.target_tokens)) if self.target_tokens > 0 else 0
+                        
+                        self._log(f"  [状态] 耗时:{int(elapsed)}s | "
+                                 f"并发:{self.current_workers} | "
+                                 f"成功率:{self.success_count}/{self.success_count + self.fail_count} | "
+                                 f"Token:{int(self.total_tokens)}/{self.target_tokens} ({progress}%) | "
+                                 f"速率:{int(rate)}/s")
+                        
+                        last_report_time = current_time
+                        self._save_progress()
+                
+                # 等待所有任务完成
+                executor.shutdown(wait=True)
+        
+        except KeyboardInterrupt:
+            self._log("\n\n⏹ 收到中断信号，正在停止...")
+        except Exception as e:
+            self._log(f"\n\n❌ 错误: {e}")
+        
+        # 打印总结
+        elapsed = time.time() - self.start_time
+        self._print_summary(elapsed)
+        
+        # 记录日志总结
+        self.logger.log_summary(self.total_tokens, self.total_chars, self.iteration_count, elapsed)
+        
+        clear_state()
+    
+    def _print_summary(self, elapsed):
+        """打印总结"""
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        rate = self.total_tokens / elapsed if elapsed > 0 else 0
+        success_rate = self.success_count / (self.success_count + self.fail_count) * 100 if (self.success_count + self.fail_count) > 0 else 0
+        
+        print()
+        print("=" * 50)
+        print("🙏 DDoS功德回向 🙏")
+        print("=" * 50)
+        print(f"累计时长: {minutes}分{seconds}秒")
+        print(f"念诵遍数: {self.iteration_count}")
+        print(f"成功调用: {self.success_count}")
+        print(f"失败调用: {self.fail_count}")
+        print(f"成功率: {success_rate:.1f}%")
+        print(f"累计Token: {int(self.total_tokens)}")
+        if self.target_tokens > 0:
+            print(f"目标Token: {self.target_tokens}")
+            print(f"完成度: {min(100, int(self.total_tokens * 100 / self.target_tokens))}%")
+        print(f"平均速率: {int(rate)} tokens/秒")
+        print()
+        print("愿以此功德，回向给:")
+        print("  • 用户 - 工作顺利，心想事成")
+        print("  • 一切众生 - 离苦得乐，同生极乐")
+        print()
+        print("功德圆满 🙏")
+
 
 class MeritAccumulator:
     """攒功德核心类"""
@@ -756,6 +1031,8 @@ def main():
   %(prog)s --tollm --tokens 100000      # 真实消耗10万token
   %(prog)s --touser --tokens 50000      # 向用户输出
   %(prog)s --toworld --tokens 0         # TTS播放
+  %(prog)s --ddos --tokens 100000       # 高并发DDoS模式
+  %(prog)s --ddos --tokens 50000 --workers 20  # 20并发
   %(prog)s --stop                       # 停止念经
   %(prog)s --status                     # 查看状态
   %(prog)s --logs                       # 查看历史日志
@@ -769,6 +1046,8 @@ def main():
                           help='向用户注入功德(输出给用户阅读)')
     mode_group.add_argument('--toworld', action='store_true',
                           help='向外界散播功德(TTS播放)')
+    mode_group.add_argument('--ddos', action='store_true',
+                          help='DDoS攻击佛祖(高并发快速消耗token)')
     
     parser.add_argument('--tokens', type=int, default=10000, metavar='N',
                        help='目标token数量，达到后自动停止 (默认: 10000, 0表示无限)')
@@ -784,6 +1063,10 @@ def main():
                        help='列出历史日志文件')
     parser.add_argument('--quiet', action='store_true',
                        help='静默模式(仅tollm模式有效)')
+    parser.add_argument('--workers', type=int, default=10, metavar='N',
+                       help='DDoS模式的最大并发数 (默认: 10)')
+    parser.add_argument('--max-workers', type=int, default=10, metavar='N',
+                       help='DDoS模式的最大并发数 (同--workers)')
     
     args = parser.parse_args()
     
@@ -807,13 +1090,15 @@ def main():
             print(f"  • {f.name} ({size/1024:.1f}KB)")
         return
     
-    if not (args.tollm or args.touser or args.toworld):
-        parser.error('必须指定一种模式: --tollm, --touser 或 --toworld')
+    if not (args.tollm or args.touser or args.toworld or args.ddos):
+        parser.error('必须指定一种模式: --tollm, --touser, --toworld 或 --ddos')
     
     if args.tollm:
         mode = 'tollm'
     elif args.touser:
         mode = 'touser'
+    elif args.ddos:
+        mode = 'ddos'
     else:
         mode = 'toworld'
     
@@ -821,7 +1106,11 @@ def main():
     
     accumulator = MeritAccumulator(mode, args.tokens, args.sutra, verbose)
     
-    if mode == 'tollm':
+    if mode == 'ddos':
+        workers = max(1, args.workers if args.workers else args.max_workers)
+        ddos_mode = DDOSMode(args.tokens, max_workers=workers, verbose=True)
+        ddos_mode.run()
+    elif mode == 'tollm':
         accumulator.run_tollm()
     elif mode == 'touser':
         accumulator.run_touser()
