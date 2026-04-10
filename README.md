@@ -102,31 +102,18 @@ git clone https://github.com/Jageri/zan-gongde.git ~/.agents/skills/zan-gongde
 
 ## 工作原理
 
-OpenClaw Agent 会:
-1. 加载 7 部佛经到内存
-2. 轮询获取经文片段
-3. **循环调用 LLM 念诵经文**(每次迭代都真实消耗 token)
-4. 累加消耗的 token 数
-5. 达到目标后输出总结
+OpenClaw Agent 循环调用 LLM 念诵经文，实时累加 token 消耗，达到目标后停止。
 
 ```
 用户说"攒功德 50000"
     ↓
-Agent 加载经文(7部经典)
+Agent 加载经文(996部随机选)
     ↓
 循环 {
-    获取下一段经文
-        ↓
-    构造 prompt
-        ↓
-    真实调用 OpenClaw LLM
-        ↓
-    累加 token 消耗
-        ↓
-    输出响应(touser模式)
+    获取经文片段 → 构造 prompt → 调用 LLM → 累加 tokens
 } 直到达到 50000 tokens
     ↓
-功德圆满,输出总结
+功德圆满
 ```
 
 ---
@@ -286,17 +273,10 @@ Agent 加载经文(7部经典)
 
 ```
 zan-gongde/
-├── SKILL.md                      # OpenClaw Skill 配置
-├── README.md                     # 本文件
-├── scripts/
-│   └── merit_accumulator.py      # 核心脚本(四种模式)
-├── sutras/                       # 📚 996部佛经,25MB!
-│   ├── 华严经_01.md ~ 华严经_80.md    # 华严经全本
-│   ├── 大宝积经_001.md ~ 大宝积经_120.md # 大宝积经全本
-│   ├── 地藏经.txt
-│   ├── 金刚经.txt
-│   └── ... (还有900+部)
-└── logs/                         # 日志目录(自动生成)
+├── SKILL.md          # OpenClaw Skill 配置(含执行逻辑)
+├── README.md         # 本文件
+├── sutras/           # 📚 996部佛经，25MB
+└── logs/             # 日志目录
 ```
 
 ---
@@ -304,12 +284,8 @@ zan-gongde/
 ## 系统要求
 
 - OpenClaw 环境
-- Python 3.8+
 
-**无需**:
-- ❌ OPENAI_API_KEY
-- ❌ ANTHROPIC_API_KEY
-- ❌ 任何 API 配置
+**无需任何 API Key**，复用 OpenClaw 自带 LLM 配置
 
 ---
 
