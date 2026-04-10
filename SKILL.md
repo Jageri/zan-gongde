@@ -372,62 +372,125 @@ def chant_sutra(mode, target_tokens, sutras):
 chant_sutra(mode, target_tokens, sutras)
 ```
 
-#### DDoS 模式
+#### DDoS 模式（真并发版）
+
+⚠️ **使用 subagent 实现真正的并发，但注意**：
+- 每个 subagent 是独立的 LLM 调用，各自消耗 token
+- 并发数 = subagent 数量，同时运行
+- 总 token 消耗可能超过目标值（并发停止有延迟）
 
 ```python
-from concurrent.futures import ThreadPoolExecutor
-import threading
+import json
+from pathlib import Path
 
-def chant_sutra_ddos(target_tokens, sutras, max_workers=10):
-    """DDoS 高并发模式"""
-    total_tokens = 0
-    success_count = 0
-    error_count = 0
-    lock = threading.Lock()
-    start_time = time.time()
-    stop_flag = threading.Event()
+def chant_sutra_ddos_subagent(target_tokens, sutras, max_workers=10):
+    """
+    DDoS 模式 - 使用 subagent 实现真正的并发
     
-    print(f"🙏 开始DDoS攻击佛祖")
-    print(f"⚡ 并发数: {max_workers}")
+    原理：启动多个 subagent，每个独立调用 LLM 念诵经文
+    每个 subagent 完成一次念诵后报告消耗的 token 数
+    """
+    import time
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    print(f"🙏 开始DDoS攻击佛祖（真并发版）")
+    print(f"⚡ 并发数: {max_workers} 个 subagent")
     print(f"🎯 目标: {target_tokens} tokens")
+    print("⚠️ 注意：每个 subagent 独立计费，总消耗可能超额")
     print("=" * 50)
     
-    def worker():
-        nonlocal total_tokens, success_count, error_count
-        local_tokens = 0
-        local_success = 0
-        local_error = 0
+    total_tokens = 0
+    completed_workers = 0
+    lock = threading.Lock()
+    stop_flag = threading.Event()
+    start_time = time.time()
+    
+    # 为每个 worker 准备经文
+    worker_tasks = []
+    for i in range(max_workers):
+        sutra_name, fragment = sutras[i % len(sutras)]
+        worker_tasks.append({
+            "worker_id": i + 1,
+            "sutra_name": sutra_name,
+            "fragment": fragment[:100]
+        })
+    
+    def spawn_worker(task):
+        """启动单个 subagent worker"""
+        nonlocal total_tokens, completed_workers
+        
+        worker_tokens = 0
+        iterations = 0
         
         while not stop_flag.is_set():
+            # 检查是否已达标
+            with lock:
+                if total_tokens >= target_tokens:
+                    break
+            
+            # 构造 subagent 任务
+            subagent_task = f"""
+请念诵以下经文，并报告消耗的 token 数：
+
+《{task['sutra_name']}》
+{task['fragment']}
+
+要求：
+1. 以恭敬心念诵
+2. 简短回应（30字以内）
+3. 在响应末尾添加：[TOKENS: X] 表示本次调用消耗的 token 数
+"""
+            
             try:
-                # 随机选择经文
-                sutra_name, fragment = random.choice(sutras)
-                prompt = f"请念诵以下经文，并以恭敬心简短回应（30字以内）：\n\n《{sutra_name}》\n{fragment[:80]}"
+                # 启动 subagent 执行念诵
+                # 注意：这里使用 sessions_spawn 启动真正的并发 subagent
+                result = sessions_spawn(
+                    task=subagent_task,
+                    mode="run",
+                    timeout_seconds=30,
+                    light_context=True  # 轻量级模式
+                )
                 
-                # 调用 LLM
-                response = chat(prompt)
+                # 解析返回的 token 数
+                response = result.get('response', '')
+                import re
+                token_match = re.search(r'\[TOKENS:\s*(\d+)\]', response)
+                if token_match:
+                    tokens_this_call = int(token_match.group(1))
+                else:
+                    # 估算
+                    tokens_this_call = estimate_tokens(subagent_task) + estimate_tokens(response)
                 
-                # 估算
-                tokens = estimate_tokens(prompt) + estimate_tokens(response)
-                local_tokens += tokens
-                local_success += 1
+                worker_tokens += tokens_this_call
+                iterations += 1
                 
-                # 检查是否达标
+                # 累加到总计
                 with lock:
+                    total_tokens += tokens_this_call
                     if total_tokens >= target_tokens:
                         stop_flag.set()
                         break
-                    total_tokens += tokens
-                    
+                        
             except Exception as e:
-                local_error += 1
-                time.sleep(0.5)  # 错误时降速
+                # subagent 失败，短暂休息
+                time.sleep(0.5)
         
-        return local_tokens, local_success, local_error
+        completed_workers += 1
+        return {
+            "worker_id": task["worker_id"],
+            "iterations": iterations,
+            "tokens": worker_tokens
+        }
     
-    # 启动并发
+    # 启动所有 subagent workers（真正的并发）
+    results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(worker) for _ in range(max_workers)]
+        # 提交所有任务
+        future_to_task = {
+            executor.submit(spawn_worker, task): task 
+            for task in worker_tasks
+        }
         
         # 实时显示进度
         last_report = 0
@@ -435,25 +498,42 @@ def chant_sutra_ddos(target_tokens, sutras, max_workers=10):
             time.sleep(1)
             elapsed = time.time() - start_time
             rate = total_tokens / elapsed if elapsed > 0 else 0
+            progress = min(100, int(100 * total_tokens / target_tokens))
             
-            if total_tokens - last_report > target_tokens // 10:  # 每10%报告一次
-                print(f"  [状态] Token:{total_tokens}/{target_tokens} ({100*total_tokens//target_tokens}%) | 速率:{rate:.0f}/s")
+            if total_tokens - last_report >= target_tokens // 10:
+                print(f"  [状态] Token:{total_tokens:,}/{target_tokens:,} ({progress}%) | "
+                      f"速率:{rate:,.0f}/s | 活跃:{max_workers - completed_workers}/{max_workers}")
                 last_report = total_tokens
         
+        # 设置停止标志
         stop_flag.set()
+        
+        # 收集结果
+        for future in as_completed(future_to_task):
+            try:
+                result = future.result(timeout=5)
+                results.append(result)
+            except Exception as e:
+                pass
     
     # 总结
     elapsed = time.time() - start_time
+    total_iterations = sum(r["iterations"] for r in results)
+    
     print("\n" + "=" * 50)
-    print("🙏 DDoS功德回向")
-    print(f"   目标: {target_tokens}")
-    print(f"   实际: {total_tokens}")
+    print("🙏 DDoS功德回向（真并发版）")
+    print(f"   目标: {target_tokens:,} tokens")
+    print(f"   实际: {total_tokens:,} tokens")
+    print(f"   超额: {max(0, total_tokens - target_tokens):,} tokens ({100*(total_tokens-target_tokens)/target_tokens:.1f}%)")
     print(f"   耗时: {elapsed:.1f}秒")
-    print(f"   速率: {total_tokens/elapsed:.0f} tokens/秒")
+    print(f"   平均速率: {total_tokens/elapsed:,.0f} tokens/秒")
+    print(f"   并发数: {max_workers} subagents")
+    print(f"   总轮次: {total_iterations}")
+    print(f"   每轮平均: {total_tokens/total_iterations if total_iterations > 0 else 0:.0f} tokens")
 
 # 根据模式执行
 if mode == "ddos":
-    chant_sutra_ddos(target_tokens, sutras, workers)
+    chant_sutra_ddos_subagent(target_tokens, sutras, workers)
 else:
     chant_sutra(mode, target_tokens, sutras)
 ```
